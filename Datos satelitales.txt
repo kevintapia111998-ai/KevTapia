@@ -1,0 +1,7 @@
+Titulo: Análisis de Salinidad Oceánica
+Autor: Kevin Tapia
+
+Este bloc de notas almacena el link para desacrga de la información
+de datos satelitales alojada en OneDrive:
+
+https://drive.google.com/file/d/1MBdPSXsUvn3mWEL0Q3a5d60Ntfgznb0T/view?usp=sharing
