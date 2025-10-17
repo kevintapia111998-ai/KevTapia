@@ -1,0 +1,297 @@
+---
+title: "Informe de Análisis de Salinidad Oceánica"
+author: "Kevin Alexander Tapia Rodriguez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: xelatex
+classoption: svgnames
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \usepackage{multirow}
+  - \usepackage{wrapfig}
+  - \usepackage{float}
+  - \usepackage{colortbl}
+  - \usepackage{pdflscape}
+  - \usepackage{tabu}
+  - \usepackage{threeparttable}
+  - \usepackage{threeparttablex}
+  - \usepackage[normalem]{ulem}
+  - \usepackage{makecell}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center", out.width = "90%" )
+```
+
+```{r}
+# Cargar paquetes
+library(satin)
+library(lubridate)
+library(terra)
+library(kableExtra)
+library(ggplot2)
+```
+
+```{r}
+# Función para formatear datos extraídos
+formatear_serie_temporal <- function(datos_extraidos, datos_nc) {
+  n_fechas <- length(datos_nc@period$tmStart)
+  n_profundidades <- length(datos_nc@depth)
+  
+  # Tomar solo los datos de valores (columnas 7 en adelante)
+  valores <- as.data.frame(t(datos_extraidos[, 7:ncol(datos_extraidos)]))
+  
+  # Crear data frame con fechas
+  serie_temporal <- data.frame(
+    fecha = datos_nc@period$tmStart,
+    valor = valores[, 1]  # Primer punto extraído
+  )
+  
+  return(serie_temporal)
+}
+```
+
+# Informe de Análisis de Salinidad Oceánica
+
+## Introducción
+
+Este informe presenta el análisis de datos de salinidad oceánica
+mediante procesamiento de archivos NetCDF, incluyendo series temporales,
+análisis espacial y cálculo de anomalías.
+
+```{r}
+# Configuración interactiva de rutas y coordenadas
+ruta_archivo <- file.choose()
+coordenadas_interes <- data.frame(x = -80, y = 3)
+
+cat("**Configuración del análisis:**\n\n")
+cat("- Archivo seleccionado:", basename(ruta_archivo), "\n")
+cat("- Coordenadas de interés: Lon =", coordenadas_interes$x, ", Lat =", coordenadas_interes$y, "\n")
+```
+
+```{r}
+# Leer archivo NetCDF
+datos_nc <- read.cmems(ruta_archivo)
+
+cat("**Metadatos del dataset:**\n\n")
+cat("- **Título:**", datos_nc@attribs$title, "\n")
+cat("- **Variable:**", datos_nc@attribs$name, "\n")
+cat("- **Unidades:**", datos_nc@attribs$units, "\n")
+cat("- **Rango temporal:**", as.character(range(datos_nc@period$tmStart)), "\n")
+cat("- **Dimensión espacial:**", length(datos_nc@lon), "×", length(datos_nc@lat), "puntos\n")
+cat("- **Profundidades:**", paste(datos_nc@depth, collapse = ", "), "\n")
+cat("- **Resolución espacial:**", datos_nc@attribs$spatial, "\n")
+```
+
+### Visualización espacial inicial
+
+Se muestra una figura de la información local correspondiente a la
+variable ambiental de Salinidad
+
+```{r}
+plot(datos_nc, main = paste("Salinidad -", datos_nc@attribs$longname))
+```
+
+```{r}
+# Extraer datos en punto de interés
+datos_puntos <- extractPts(datos_nc, points = coordenadas_interes)
+serie_s <- formatear_serie_temporal(datos_puntos, datos_nc)
+
+# Agregar información temporal
+serie_s$mes <- month(serie_s$fecha)
+serie_s$año <- year(serie_s$fecha)
+```
+
+### Serie temporal
+
+```{r}
+ggplot(serie_s, aes(x = fecha, y = valor)) +
+  geom_line(color = "#2980b9", alpha = 0.8, size = 0.8) +
+  geom_smooth(method = "loess", color = "#e74c3c", se = TRUE, span = 0.2) +
+  labs(
+    title = paste("Serie Temporal de", datos_nc@attribs$name),
+    subtitle = paste("Coordenadas: Lon =", coordenadas_interes$x, ", Lat =", coordenadas_interes$y),
+    x = "Fecha",
+    y = paste(datos_nc@attribs$name, "(", datos_nc@attribs$units, ")")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray50")
+  )
+```
+
+### Estadística descriptiva
+
+```{r}
+stats_salinidad <- data.frame(
+  Métrica = c("Mínimo", "Máximo", "Media", "Mediana", "Desviación Estándar", "Coef. Variación"),
+  Valor = c(
+    round(min(serie_s$valor, na.rm = TRUE), 3),
+    round(max(serie_s$valor, na.rm = TRUE), 3),
+    round(mean(serie_s$valor, na.rm = TRUE), 3),
+    round(median(serie_s$valor, na.rm = TRUE), 3),
+    round(sd(serie_s$valor, na.rm = TRUE), 3),
+    round(sd(serie_s$valor, na.rm = TRUE)/mean(serie_s$valor, na.rm = TRUE) * 100, 1)
+  )
+)
+
+kable(stats_salinidad,
+      caption = "Estadísticas descriptivas de la serie temporal de salinidad",
+      col.names = c("Métrica", "Valor"),
+      align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(0, bold = TRUE, background = "#2c3e50", color = "white")
+```
+
+## Análisis de Tendencia Estacional
+
+### Promedios Mensuales
+
+```{r}
+resumen_mensual <- aggregate(serie_s$valor, 
+                            by = list(mes = serie_s$mes, año = serie_s$año), 
+                            mean, na.rm = TRUE)
+
+names(resumen_mensual) <- c("Mes", "Año", "Salinidad_Promedio")
+
+# Agregar nombres de meses
+resumen_mensual$Mes_Nombre <- month.abb[resumen_mensual$Mes]
+```
+
+```{r}
+# Mostrar primeros 12 registros
+kable(head(resumen_mensual, 12),
+      caption = "Promedios mensuales de salinidad (primeros 12 registros)",
+      col.names = c("Mes", "Año", "Salinidad", "Mes_Nombre"),
+      align = c("c", "c", "r", "c"),
+      digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(0, bold = TRUE, background = "#2c3e50", color = "white")
+```
+
+### Visualización de Promedios Mensuales
+
+```{r}
+meses_plot <- as.Date(paste(resumen_mensual$Año, resumen_mensual$Mes, "15", sep = "-"))
+
+ggplot(resumen_mensual, aes(x = meses_plot, y = Salinidad_Promedio)) +
+  geom_line(color = "#e74c3c", size = 1) +
+  geom_point(color = "#e74c3c", size = 2, alpha = 0.7) +
+  labs(
+    title = "Promedios Mensuales de Salinidad",
+    x = "Fecha",
+    y = paste("Salinidad Promedio", "(", datos_nc@attribs$units, ")")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 months")
+```
+
+## Análisis Espacial Avanzado
+
+### Promedios Anuales
+
+```{r}
+promedio_anual <- satinMean(datos_nc, by = "%Y")
+
+cat("**Resumen de promedios anuales calculados:**\n\n")
+cat("- Número de años:", length(promedio_anual@period$tmStart), "\n")
+cat("- Años disponibles:", unique(year(promedio_anual@period$tmStart)), "\n")
+```
+
+```{r}
+plot(promedio_anual, period = 1, 
+     main = paste("Salinidad Promedio - Año", year(promedio_anual@period$tmStart[1])))
+```
+
+```{r}
+n_años <- length(promedio_anual@period$tmStart)
+plot(promedio_anual, period = n_años, 
+     main = paste("Salinidad Promedio - Año", year(promedio_anual@period$tmStart[n_años])))
+```
+
+## Análisis de Anomalías
+
+```{r}
+años_unicos <- length(unique(year(datos_nc@period$tmStart)))
+
+if(años_unicos >= 2) {
+  promedio_climatologico <- satinMean(datos_nc, by = "%m")
+  datos_mensuales <- satinMean(datos_nc, by = "%Y-%m")
+  anomalias <- anomaly(datos_mensuales, promedio_climatologico)
+  
+  cat("**Anomalías calculadas exitosamente:**\n\n")
+  cat("- Años disponibles:", años_unicos, "\n")
+  cat("- Periodos mensuales:", length(anomalias@period$tmStart), "\n")
+  cat("- Rango de anomalías:", paste(round(range(anomalias@data, na.rm = TRUE), 3), collapse = " a "), "\n")
+} else {
+  cat("**No hay suficientes datos para calcular anomalías**\n")
+  cat("- Se requieren al menos 2 años de datos\n")
+  cat("- Años disponibles:", años_unicos, "\n")
+}
+```
+
+```{r}
+if(exists("anomalias")) {
+  plot(anomalias, period = 1,
+       main = paste("Anomalías de Salinidad -", format(anomalias@period$tmStart[1], "%B %Y")))
+}
+```
+
+```{r}
+##Resultados
+# Guardar serie temporal
+write.csv(serie_s, "serie_temporal_salinidad.csv", row.names = FALSE)
+
+cat("**Archivos exportados:**\n\n")
+cat("- `serie_temporal_salinidad.csv`: Serie temporal completa del punto de interés\n")
+cat("- Informe en formato HTML/PDF: Contiene todos los análisis y visualizaciones\n\n")
+
+cat("**Resumen del análisis completado:**\n")
+cat("- Archivo procesado:", basename(ruta_archivo), "\n")
+cat("- Variable analizada:", datos_nc@attribs$longname, "\n")
+cat("- Punto analizado: Lon =", coordenadas_interes$x, ", Lat =", coordenadas_interes$y, "\n")
+cat("- Rango temporal:", as.character(range(datos_nc@period$tmStart)), "\n")
+cat("- Total de observaciones:", nrow(serie_s), "\n")
+```
+
+```{r}
+cat("## Métodos\n\n")
+cat("### Procesamiento de Datos\n\n")
+cat("- **Software:** R", R.version.string, "\n")
+cat("- **Paquetes:** satin, lubridate, terra, ggplot2, kableExtra\n")
+cat("- **Formato de entrada:** NetCDF oceanográfico\n")
+cat("- **Algoritmos:** Promedios temporales, extracción espacial, cálculo de anomalías\n\n")
+
+cat("### Coordenadas de Análisis\n\n")
+cat("- **Longitud:**", coordenadas_interes$x, "°\n")
+cat("- **Latitud:**", coordenadas_interes$y, "°\n")
+cat("- **Archivo:**", basename(ruta_archivo), "\n\n")
+
+cat("## Conclusión\n\n")
+cat("El análisis completo de salinidad oceánica ha sido ejecutado exitosamente, generando series temporales, mapas espaciales y análisis de anomalías para el punto de interés especificado.\n\n")
+
+cat("***\n\n")
+cat("*Informe generado automáticamente el", format(Sys.Date(), "%d de %B de %Y"), "*\n")
+cat("*Período analizado:", as.character(range(datos_nc@period$tmStart)), "*\n")
+```
